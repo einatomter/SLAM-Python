@@ -48,7 +48,7 @@ class featuresDetection:
 
     # slope-intercept form to general form
     def lineFormSI2G(self, m, b):
-        A, B, C = -m, 1, -B
+        A, B, C = -m, 1, -b
         if A < 0:
             A, B, C = -A, -B, -C
     
@@ -124,9 +124,10 @@ class featuresDetection:
         m, b = p
         return m * x + b
 
+    # create a fitted model using ODR
     def odrFit(self, laserPoints):
-        x = np.array([i[0][0]] for i in laserPoints)
-        y = np.array([i[0][1]] for i in laserPoints)
+        x = np.array([i[0][0] for i in laserPoints])
+        y = np.array([i[0][1] for i in laserPoints])
 
         # create a model for fitting
         linearModel = Model(self.linearFunc)
@@ -141,3 +142,97 @@ class featuresDetection:
         out = odrModel.run()
         m, b = out.beta
         return m, b
+
+    #
+    def predictPoint(self, lineParams, sensedPoint, robotPos):
+        m, b = self.lineFrom2P(robotPos, sensedPoint)
+        params1 = self.lineFormSI2G(m, b)
+        predx, predy = self.lineIntersectGeneral(params1, lineParams)
+
+        return predx, predy
+
+    def seedSegmentDetection(self, robotPos, breakPointInd):
+        flag = True
+        self.NP = max(0, self.NP)
+        self.SEED_SEGMENTS = []
+
+        for i in range(breakPointInd, (self.NP - self.PMIN)):
+            predictedPointsToDraw = []
+            j = i + self.SNUM
+            m, c = self.odrFit(self.LASERPOINTS[i:j])
+
+            params = self.lineFormSI2G(m, c)
+
+            # iterate over points to see if it should be in the line segment
+            for k in range(i, j):
+                predictedPoint = self.predictPoint(params, self.LASERPOINTS[k][0], robotPos)
+                predictedPointsToDraw.append(predictedPoint)
+
+                d1 = self.distP2P(predictedPoint, self.LASERPOINTS[k][0])
+                if d1 > self.DELTA:
+                    flag = False
+                    break
+
+                # TODO: check if 2nd param should be predictedPoint or self.LASERPOINTS[k][0]
+                d2 = self.distP2L(params, self.LASERPOINTS[k][0])
+                if d2 > self.EPSILON:
+                    flag = False
+                    break
+
+            if flag:
+                self.LINE_PARAMS = params
+                return [self.LASERPOINTS[i:j], predictedPointsToDraw, (i, j)]
+
+        return False
+
+    def seedSegmentGrowing(self, indices, breakPoint):
+        lineEq = self.LINE_PARAMS
+        i, j = indices
+
+        # beginning and final points in the line segment
+        PB, PF = max(breakPoint, i - 1), min(j + 1, len(self.LASERPOINTS) - 1)
+
+        # grow seed segment on left side
+        while self.distP2L(lineEq, self.LASERPOINTS[PF][0]) < self.EPSILON:
+            if PF > self.NP - 1:
+                break
+            else:
+                m, b = self.odrFit(self.LASERPOINTS[PB:PF])
+                lineEq = self.lineFormSI2G(m, b)
+                POINT = self.LASERPOINTS[PF][0]
+
+            PF = PF + 1
+            NEXTPOINT = self.LASERPOINTS[PF][0]
+            if self.distP2P(POINT, NEXTPOINT) > self.GMAX:
+                break
+
+        PF = PF - 1
+
+        # grow seed segment on right side
+        while self.distP2L(lineEq, self.LASERPOINTS[PB][0]) < self.EPSILON:
+            if PB < breakPoint:
+                break
+            else:
+                m, b = self.odrFit(self.LASERPOINTS[PB:PF])
+                lineEq = self.lineFormSI2G(m, b)
+                POINT = self.LASERPOINTS[PB][0]
+
+            PB = PB - 1
+            NEXTPOINT = self.LASERPOINTS[PB][0]
+            if self.distP2P(POINT, NEXTPOINT) > self.GMAX:
+                break
+
+        PB = PB + 1
+
+        LR = self.distP2P(self.LASERPOINTS[PB][0], self.LASERPOINTS[PF][0])
+        PR = len(self.LASERPOINTS[PB:PF])
+
+        if (LR >= self.LMIN) and (PR >= self.PMIN):
+            self.LINE_PARAMS = lineEq
+            m, b = self.lineFormG2SI(lineEq[0], lineEq[1], lineEq[2])
+            self.twoPoints = self.lineGet2P(m, b)
+            self.LINE_SEGMENTS.append((self.LASERPOINTS[PB + 1][0], self.LASERPOINTS[PF - 1][0]))
+            return [self.LASERPOINTS[PB:PF], self.twoPoints,
+                   (self.LASERPOINTS[PB + 1 ][0], self.LASERPOINTS[PF - 1][0]), PF, lineEq, (m,b)]
+        else:
+            return False
