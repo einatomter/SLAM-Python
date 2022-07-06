@@ -3,6 +3,11 @@ import numpy as np
 from fractions import Fraction
 from scipy.odr import *
 
+# landmarks
+LANDMARKS = []
+
+
+
 class featuresDetection:
     def __init__(self):
         # variables
@@ -19,9 +24,11 @@ class featuresDetection:
         self.LMIN = 20                      # minimum length of a line segment
         self.LR = 0                         # real length of a line segment
         self.PR = 0                         # the number of laser points contained in the line segment
+        self.FEATURES = []
 
     # euclidian distance from point1 to point2
-    def distP2P(self, point1, point2):
+    @staticmethod
+    def distP2P(point1, point2):
         px = (point1[0] - point2[0]) ** 2
         py = (point1[1] - point2[1]) ** 2
         return math.sqrt(px + py)
@@ -57,10 +64,6 @@ class featuresDetection:
 
         gcd = np.gcd(denA, denC)
         lcm = denA * denC / gcd
-        print(f'lcm manual: {lcm}')
-
-        lcm2 = np.lcm(denA, denC)
-        print(f'lcm numpy: {lcm2}')
 
         A = A * lcm
         B = B * lcm
@@ -233,6 +236,46 @@ class featuresDetection:
             self.twoPoints = self.lineGet2P(m, b)
             self.LINE_SEGMENTS.append((self.LASERPOINTS[PB + 1][0], self.LASERPOINTS[PF - 1][0]))
             return [self.LASERPOINTS[PB:PF], self.twoPoints,
-                   (self.LASERPOINTS[PB + 1 ][0], self.LASERPOINTS[PF - 1][0]), PF, lineEq, (m,b)]
+                   (self.LASERPOINTS[PB + 1][0], self.LASERPOINTS[PF - 1][0]), PF, lineEq, (m,b)]
         else:
             return False
+
+    # convert line feature to a point representation
+    def lineF2P(self):
+        newRep = [] # the new representation of the features
+
+        for feature in self.FEATURES:
+            projection = self.projectionP2L((0,0), feature[0][0], feature[0][1])
+            newRep.append([feature[0], feature[1], projection])
+
+        return newRep
+
+def isOverlap(seg1, seg2):
+    length1 = featuresDetection.distP2P(seg1[0], seg1[1])
+    length2 = featuresDetection.distP2P(seg2[0], seg2[1])
+    center1 = ((seg1[0][0] + seg1[1][0])/2, (seg1[0][1] + seg1[1][1])/2)
+    center2 = ((seg2[0][0] + seg2[1][0])/2, (seg2[0][1] + seg2[1][1])/2)
+
+    dist = featuresDetection.distP2P(center1, center2)
+    if dist > (length1 + length2)/2:
+        return False
+    else:
+        return True
+
+def landmarkAssociation(landmarks):
+    thresh = 10
+    for l in landmarks:
+
+        flag = False
+        for i, landmark in enumerate(LANDMARKS):
+            dist = featuresDetection.distP2P(l[2], landmark[2])
+            if dist < thresh:
+                if not isOverlap(l[1], landmark[1]):
+                    continue
+                else:
+                    LANDMARKS.pop(i)
+                    LANDMARKS.insert(i, l)
+                    flag = True
+                    break
+        if not flag:
+            LANDMARKS.append(l)
